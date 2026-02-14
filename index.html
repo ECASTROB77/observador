@@ -272,7 +272,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--g800);font
 /* ═══════════════════════════════════════════════════
    CONFIG — EL ADMINISTRADOR PEGA SU CLIENT ID AQUÍ
    ═══════════════════════════════════════════════════ */
-const GOOGLE_CLIENT_ID = '482814311423-s1vtaim7cmh51f38jl745lilr1ormekd.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '';
 /* ═══════════════════════════════════════════════════ */
 
 const STORAGE='obs_v7',PIN_KEY='obs_pin',SHEET_KEY='obs_sheet_id';
@@ -318,7 +318,7 @@ function initGoogle() {
   s.onload = () => {
     gTokenClient = google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+      scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
       callback: onToken
     });
   };
@@ -341,6 +341,7 @@ async function onToken(resp) {
     document.getElementById('gName').textContent = u.name || '';
     document.getElementById('gEmail').textContent = u.email || '';
   } catch (e) {}
+  // 1. Try localStorage
   gSheetId = localStorage.getItem(SHEET_KEY);
   if (gSheetId) {
     try {
@@ -348,15 +349,42 @@ async function onToken(resp) {
       if (!r.ok) gSheetId = null;
     } catch (e) { gSheetId = null; }
   }
-  if (!gSheetId) await createPrivateSheet();
+  // 2. If not in localStorage, search Google Drive for existing sheet
+  if (!gSheetId) {
+    gSheetId = await findExistingSheet();
+  }
+  // 3. If still not found, create new one
+  if (!gSheetId) {
+    await createPrivateSheet();
+  }
   setSyncUI('on');
   pullFromSheet();
+}
+
+// Search Google Drive for an existing Observador sheet
+const SHEET_TITLE = 'Observador IE Jorge Artel — Mis Estudiantes';
+async function findExistingSheet() {
+  try {
+    showSyncBar('🔍 Buscando datos existentes en tu Drive...', 'syncing');
+    const query = encodeURIComponent("name='" + SHEET_TITLE + "' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false");
+    const r = await fetch('https://www.googleapis.com/drive/v3/files?q=' + query + '&fields=files(id,name)&orderBy=modifiedTime desc', {
+      headers: { Authorization: 'Bearer ' + gAccessToken }
+    });
+    const data = await r.json();
+    if (data.files && data.files.length > 0) {
+      const id = data.files[0].id;
+      localStorage.setItem(SHEET_KEY, id);
+      showSyncBar('✅ Datos encontrados — sincronizando...', 'synced');
+      return id;
+    }
+  } catch (e) { console.error('Drive search error:', e); }
+  return null;
 }
 
 async function createPrivateSheet() {
   try {
     showSyncBar('📝 Creando tu hoja de datos privada...', 'syncing');
-    const body = { properties: { title: 'Observador IE Jorge Artel — Mis Estudiantes' }, sheets: [{ properties: { title: 'Estudiantes' } }] };
+    const body = { properties: { title: SHEET_TITLE }, sheets: [{ properties: { title: 'Estudiantes' } }] };
     const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
       method: 'POST', headers: { Authorization: 'Bearer ' + gAccessToken, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
